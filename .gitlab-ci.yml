@@ -1,0 +1,9 @@
+image: python:3.11-slim
+stages: [test]
+tests:
+  stage: test
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends ffmpeg
+    - python -m pip install -e '.[test]'
+  script:
+    - python -m pytest -q

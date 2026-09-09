@@ -1,0 +1,18 @@
+[qiniu]
+base_url = "https://pyapi.youinsh.com/livestreamapi"
+
+[media]
+output_dir = "data"
+segment_seconds = 3600
+
+[feishu]
+base_token = "YOUR_BASE_TOKEN"
+audio_table = "YOUR_AUDIO_TABLE_ID"
+cli = "lark-cli"
+# profile = "your-lark-profile"
+
+[feishu.danmaku_tables]
+"小学" = "YOUR_PRIMARY_TABLE_ID"
+"初中" = "YOUR_MIDDLE_TABLE_ID"
+"高中" = "YOUR_HIGH_TABLE_ID"
+"初高" = "YOUR_MIXED_TABLE_ID"
