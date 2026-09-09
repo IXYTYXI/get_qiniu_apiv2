@@ -1,5 +1,5 @@
 import argparse
-from datetime import date, timedelta
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -58,8 +58,9 @@ def main(argv=None):
                 info = api.live_info(live_id)
                 sessions.append({**info, 'id': live_id})
         else:
-            # Include following-day completions for streams crossing midnight.
-            sessions = select_sessions(api.sessions(args.date + timedelta(days=1)), args.date)
+            # Live verification: endDate is a completion-date lower bound.
+            # Using the next day omits sessions ending on the requested day.
+            sessions = select_sessions(api.sessions(args.date), args.date)
         if args.dry_run:
             print(json.dumps([{'id': s['id'], 'title': s.get('title'), 'start_time': s.get('start_time')}
                               for s in sessions], ensure_ascii=False, indent=2))

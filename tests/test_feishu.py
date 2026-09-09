@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import subprocess
 from collections import Counter
 import pytest
@@ -19,7 +20,7 @@ def test_batch_is_200_rows_and_user_identity(tmp_path):
     def runner(args, **kwargs):
         calls.append(args)
         if '+record-batch-create' in args:
-            body = json.loads(open(args[args.index('--json') + 1][1:]).read())
+            body = json.loads((Path(kwargs['cwd']) / args[args.index('--json') + 1][1:]).read_text())
             assert len(body['rows']) <= 200
         return subprocess.CompletedProcess(args, 0, json.dumps({'ok': True, 'data': {}}), '')
     base = FeishuBase('base', runner=runner)
@@ -42,7 +43,7 @@ def test_attachment_resume_skips_already_uploaded_file(tmp_path):
     base = FeishuBase('base', runner=runner)
     assert base.sync_audio('tbl1', 1, 'title', '2026-09-09', [a, b]) == 1
     uploads = [x for x in calls if '+record-upload-attachment' in x]
-    assert len(uploads) == 1 and str(b) in uploads[0] and str(a) not in uploads[0]
+    assert len(uploads) == 1 and b.name in uploads[0] and a.name not in uploads[0]
 
 
 def test_failed_cli_is_not_retried_blindly():
@@ -61,3 +62,22 @@ def test_schema_mismatch_blocks_writes():
         return subprocess.CompletedProcess(args, 0, json.dumps({'ok': True, 'data': {'fields': [{'name': '音频', 'type': 'text'}], 'total': 1}}), '')
     with pytest.raises(FeishuError, match='音频'):
         FeishuBase('base', runner=runner).validate('tbl1', {'音频': 'attachment'})
+
+
+def test_cli_file_arguments_are_relative_to_subprocess_cwd(tmp_path):
+    def runner(args, **kwargs):
+        cwd = Path(kwargs['cwd'])
+        if '--json' in args:
+            value = args[args.index('--json') + 1]
+            assert value.startswith('@') and not Path(value[1:]).is_absolute()
+            assert json.loads((cwd / value[1:]).read_text()) == {'名称': 'test'}
+        if '--file' in args:
+            value = args[args.index('--file') + 1]
+            assert not Path(value).is_absolute()
+            assert (cwd / value).read_bytes() == b'audio'
+        return subprocess.CompletedProcess(args, 0, json.dumps({'ok': True, 'data': {}}), '')
+    from pathlib import Path
+    base = FeishuBase('base', runner=runner)
+    base._call('+record-upsert', 'tbl1', payload={'名称': 'test'})
+    audio = tmp_path / 'audio.mp3'; audio.write_bytes(b'audio')
+    base._call('+record-upload-attachment', 'tbl1', '--file', str(audio))

@@ -97,7 +97,7 @@ qiniu-get run --date 2026-09-09
 qiniu-get --config /path/to/config.toml run --live-id 123456
 ```
 
-`--date` 明确定义为 **Asia/Shanghai 开播自然日 00:00–24:00**，不是此前其他项目的业务时间窗口。列表请求的 endDate 取次日，以包含常见的跨午夜结束直播，然后按 start_time 筛选。超长直播、尚未结束的直播或供应商不同的 endDate 语义可能影响列表发现；可以在回放生成后用 `--live-id` 明确补跑。先用 dry-run 核对目标场次。
+`--date` 明确定义为 **Asia/Shanghai 开播自然日 00:00–24:00**，不是此前其他项目的业务时间窗口。本次线上核对发现 endDate 按结束日期下限筛选，因此请求取目标日期本身，再按 start_time 筛选，避免漏掉当天结束的直播。超长直播、尚未结束的直播或供应商不同的 endDate 语义可能影响列表发现；可以在回放生成后用 `--live-id` 明确补跑。先用 dry-run 核对目标场次。
 
 `media.segment_seconds` 默认 `3600`，最后一段保留不足一小时的音频。MP3 以音频帧为边界，因此切片时长会有毫秒级偏差。
 

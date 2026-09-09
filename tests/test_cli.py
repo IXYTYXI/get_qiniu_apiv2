@@ -59,3 +59,19 @@ def test_partial_failure_continues_and_exits_nonzero(tmp_path, monkeypatch, caps
     monkeypatch.setattr(cli, 'run_session', run)
     assert cli.main(['--config', str(config), 'run', '--live-id', '1', '--live-id', '2', '--only', 'danmaku']) == 1
     assert seen == [1, 2]
+
+
+def test_date_discovery_does_not_skip_same_day_completions(tmp_path, monkeypatch, capsys):
+    from qiniu_get import cli
+    from datetime import date
+    config = tmp_path / 'config.toml'; config.write_text('')
+    for key in ('QINIU_APP_ID', 'QINIU_APP_SECRET', 'QINIU_ENTERPRISE_ID'):
+        monkeypatch.setenv(key, '1')
+    class Api:
+        def __init__(self, *args): pass
+        def sessions(self, end_date):
+            assert end_date == date(2026, 8, 24)
+            return [{'id': 1, 'title': 'test', 'start_time': '2026-08-24T08:00:00'}]
+        def close(self): pass
+    monkeypatch.setattr(cli, 'QiniuClient', Api)
+    assert cli.main(['--config', str(config), 'run', '--date', '2026-08-24', '--dry-run']) == 0

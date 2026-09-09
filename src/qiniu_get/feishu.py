@@ -45,13 +45,20 @@ class FeishuBase:
                  '--as', 'user', '--format', 'json', *map(str, args)]
         # JSON via private temp file avoids ARG_MAX for batches and exposes no text in process argv.
         with tempfile.TemporaryDirectory(prefix='qiniu-lark-') as directory:
+            cwd = None
+            if '--file' in argv:
+                file_index = argv.index('--file') + 1
+                file_path = Path(argv[file_index]).resolve()
+                cwd = str(file_path.parent)
+                argv[file_index] = file_path.name
             if payload is not None:
                 path = Path(directory) / 'request.json'
                 path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
                 path.chmod(0o600)
-                argv += ['--json', '@' + str(path)]
+                argv += ['--json', '@' + path.name]
+                cwd = directory
             try:
-                result = self.runner(argv, capture_output=True, text=True, timeout=7200)
+                result = self.runner(argv, capture_output=True, text=True, timeout=7200, cwd=cwd)
             except (OSError, subprocess.SubprocessError):
                 raise FeishuError(f'{command} could not complete; check lark-cli installation/auth and rerun') from None
             if result.returncode:
