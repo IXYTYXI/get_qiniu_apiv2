@@ -184,3 +184,7 @@ python -m qiniu_get --help
 ```
 
 GitHub Actions 和 GitLab CI 配置均包含安装 FFmpeg 后运行测试。测试不会访问真实直播 API 或写入真实飞书表。
+
+## Windows 每天自动执行
+
+见 [Windows 定时任务配置文档](docs/windows-scheduled-tasks.md)。配套 `run-daily-windows.ps1` 自动按上海时区计算昨天并保存日志，任务计划程序只需配置一次。
