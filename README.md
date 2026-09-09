@@ -2,7 +2,7 @@
 
 独立的直播采集程序：调用有因直播 API 获取回放地址和历史弹幕，下载视频，用 FFmpeg 提取并切分 MP3，将音频附件和弹幕写入飞书多维表格。
 
-**没有妙记、语音转写、数据库或 HTTP 服务端。** 这是可部署在 macOS/Linux 上的命令行采集程序。
+**没有妙记、语音转写、数据库或 HTTP 服务端。** 这是可直接部署在 Windows、macOS、Linux 上的命令行采集程序。
 
 ## 数据流
 
@@ -42,6 +42,41 @@ QINIU_ENTERPRISE_ID=你的企业ID
 ```
 
 这些是有因直播接口凭证，并非通用七牛对象存储 AK/SK，也不是飞书 app ID。`.env` 从 `config.toml` 所在目录加载；现有环境变量优先。
+
+## Windows 原生运行（无需 WSL）
+
+先安装 Python 3.11+、Git、FFmpeg，以及 Windows 版本的 `lark-cli`。确保 `ffmpeg`、`ffprobe`、`lark-cli` 在 PATH 中，且在这台 Windows 机器完成飞书用户身份授权。
+
+在 PowerShell 中执行（已克隆的项目先执行 `git pull origin main`）：
+
+```powershell
+git clone https://github.com/IXYTYXI/get_qiniu_apiv2.git
+cd get_qiniu_apiv2
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+Copy-Item config.example.toml config.toml
+Copy-Item .env.example .env
+```
+
+若安装的是 Python 3.12/3.13 等，调整 `py -3.11` 的版本号。已有 `.env` 和 `config.toml` 时不要用模板覆盖，按下文填写凭证及目标表即可。更新已有项目也要重新运行 `pip install -e .`，以安装新增依赖。
+
+```powershell
+# 检查飞书表结构
+.\.venv\Scripts\python.exe -m qiniu_get check-base
+
+# 先查询场次，不下载、不写表
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-windows.ps1 -StartDate 2026-08-24 -EndDate 2026-08-31 -DryRun
+
+# 补采整段日期的录音
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-windows.ps1 -StartDate 2026-08-24 -EndDate 2026-08-31
+
+# 单场录音
+.\.venv\Scripts\python.exe -m qiniu_get run --live-id 123456 --only audio
+```
+
+脚本默认仅音频，可指定 `-Only danmaku` 或 `-Only both`。保持终端打开、电脑不休眠。无需激活虚拟环境，也无需永久修改 PowerShell 执行策略；上述策略仅作用于当前启动进程。
+
+文件锁通过 [filelock](https://py-filelock.readthedocs.io/en/latest/) 使用各系统原生锁，保留互斥保护；进程结束会释放。`tzdata` 为 Windows 提供上海时区数据。
 
 ## 配置多维表格
 

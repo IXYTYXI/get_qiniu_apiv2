@@ -58,7 +58,7 @@ class FeishuBase:
                 argv += ['--json', '@' + path.name]
                 cwd = directory
             try:
-                result = self.runner(argv, capture_output=True, text=True, timeout=7200, cwd=cwd)
+                result = self.runner(argv, capture_output=True, text=True, encoding="utf-8", timeout=7200, cwd=cwd)
             except (OSError, subprocess.SubprocessError):
                 raise FeishuError(f'{command} could not complete; check lark-cli installation/auth and rerun') from None
             if result.returncode:

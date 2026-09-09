@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime
 import csv
-import fcntl
+from filelock import FileLock, Timeout
 import json
 from pathlib import Path
 from urllib.parse import urlparse
@@ -52,15 +52,16 @@ def message_rows(messages, live_id):
 def run_lock(directory):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    with (directory / '.collector.lock').open('a') as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError('Collector already running with this output directory') from None
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    lock = FileLock(directory / '.collector.lock')
+    try:
+        lock.acquire(timeout=0)
+    except Timeout:
+        raise RuntimeError('Collector already running with this output directory') from None
+    try:
+        yield
+    finally:
+        lock.release()
+
 
 
 def run_session(api, base, media, config, session, only='both'):
