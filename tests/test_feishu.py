@@ -20,7 +20,7 @@ def test_batch_is_200_rows_and_user_identity(tmp_path):
     def runner(args, **kwargs):
         calls.append(args)
         if '+record-batch-create' in args:
-            body = json.loads((Path(kwargs['cwd']) / args[args.index('--json') + 1][1:]).read_text())
+            body = json.loads((Path(kwargs['cwd']) / args[args.index('--json') + 1][1:]).read_text(encoding='utf-8'))
             assert len(body['rows']) <= 200
         return subprocess.CompletedProcess(args, 0, json.dumps({'ok': True, 'data': {}}), '')
     base = FeishuBase('base', runner=runner)
@@ -70,7 +70,7 @@ def test_cli_file_arguments_are_relative_to_subprocess_cwd(tmp_path):
         if '--json' in args:
             value = args[args.index('--json') + 1]
             assert value.startswith('@') and not Path(value[1:]).is_absolute()
-            assert json.loads((cwd / value[1:]).read_text()) == {'名称': 'test'}
+            assert json.loads((cwd / value[1:]).read_text(encoding='utf-8')) == {'名称': 'test'}
         if '--file' in args:
             value = args[args.index('--file') + 1]
             assert not Path(value).is_absolute()
