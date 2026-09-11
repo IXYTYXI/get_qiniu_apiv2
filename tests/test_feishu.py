@@ -178,3 +178,33 @@ def test_open_api_401_refreshes_tenant_token_once():
     base.validate('tbl1', {'音频': 'attachment'})
     assert len(tokens) == 2
     assert fields == ['Bearer t1', 'Bearer t2']
+
+
+def test_open_record_search_paginates_with_url_query_parameters():
+    queries = []
+    def handler(request):
+        if request.url.path.endswith('/tenant_access_token/internal'):
+            return httpx.Response(200, json={
+                'code': 0, 'tenant_access_token': 'test-token', 'expire': 7200})
+        assert request.method == 'POST'
+        assert request.url.path.endswith('/records/search')
+        body = json.loads(request.content)
+        assert body == {
+            'field_names': ['内容'],
+            'filter': {'conjunction': 'and', 'conditions': [
+                {'field_name': '直播ID', 'operator': 'is', 'value': ['617691']}]}}
+        query = dict(request.url.params)
+        assert query.get('page_size') == '200'
+        queries.append(query)
+        token = query.get('page_token')
+        assert token in (None, 'next/page+2')
+        second = token is not None
+        return httpx.Response(200, json={'code': 0, 'data': {
+            'items': [{'record_id': 'rec2' if second else 'rec1',
+                       'fields': {'内容': 'second' if second else 'first'}}],
+            'has_more': not second, 'page_token': '' if second else 'next/page+2'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        base = FeishuBase('base', auth='app', app_id='id', app_secret='secret', http=client)
+        records = list(base.records('table', ['内容'], [['直播ID', '==', '617691']]))
+    assert [r['id'] for r in records] == ['rec1', 'rec2']
+    assert queries == [{'page_size': '200'}, {'page_size': '200', 'page_token': 'next/page+2'}]

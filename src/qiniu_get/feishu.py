@@ -242,10 +242,11 @@ class FeishuBase:
         except KeyError:
             raise FeishuError('Unsupported record filter operator') from None
         while True:
-            body = {'field_names': fields, 'filter': filter_body, 'page_size': 200}
+            body = {'field_names': fields, 'filter': filter_body}
+            params = {'page_size': 200}
             if page_token:
-                body['page_token'] = page_token
-            data = self._open('POST', self._table(table, 'records/search'), json=body)
+                params['page_token'] = page_token
+            data = self._open('POST', self._table(table, 'records/search'), params=params, json=body)
             page = data.get('items') or []
             for item in page:
                 record_id = item.get('record_id')
