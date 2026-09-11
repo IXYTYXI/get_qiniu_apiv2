@@ -42,8 +42,31 @@ def test_parts_have_content_fingerprint(tmp_path):
     assert hashlib.sha256(parts[0].read_bytes()).hexdigest()[:12] in parts[0].name
 
 
-def test_coverage_failure_reports_durations_and_keeps_unpublished_parts(tmp_path):
+def test_coverage_failure_reports_durations_and_keeps_unpublished_parts(tmp_path, monkeypatch):
     from qiniu_get.media import AudioCoverageError
+    source = tmp_path / 'source.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                    'color=c=black:s=64x64:r=10:duration=8', '-f', 'lavfi', '-i',
+                    'sine=frequency=440:duration=8', '-c:v', 'mpeg4', '-c:a', 'aac',
+                    str(source)], check=True)
+    media = MediaProcessor()
+    original_run = media._run
+    def truncate_segments(args):
+        if '-segment_time' in args:
+            args = args[:-1] + ['-t', '2', args[-1]]
+        return original_run(args)
+    monkeypatch.setattr(media, '_run', truncate_segments)
+    try:
+        with pytest.raises(AudioCoverageError, match=r'source=8\.000s.*audio=.*difference=.*tolerance='):
+            media.segment(source, tmp_path / 'parts', 10, 3600)
+        assert source.exists()
+        assert not (tmp_path / 'parts' / 'manifest.json').exists()
+        assert list((tmp_path / 'parts').glob('*.mp3'))
+    finally:
+        media.close()
+
+
+def test_complete_audio_with_longer_container_passes_decoded_check(tmp_path):
     source = tmp_path / 'source.mp4'
     subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
                     'color=c=black:s=64x64:r=10:duration=8', '-f', 'lavfi', '-i',
@@ -51,10 +74,26 @@ def test_coverage_failure_reports_durations_and_keeps_unpublished_parts(tmp_path
                     str(source)], check=True)
     media = MediaProcessor()
     try:
-        with pytest.raises(AudioCoverageError, match=r'source=8\.000s.*audio=.*difference=.*tolerance='):
-            media.segment(source, tmp_path / 'parts', 10, 3600)
-        assert source.exists()
-        assert not (tmp_path / 'parts' / 'manifest.json').exists()
-        assert list((tmp_path / 'parts').glob('*.mp3'))
+        parts = media.segment(source, tmp_path / 'parts', 11, 3600)
+        assert sum(media.duration(p) for p in parts) == pytest.approx(2, abs=.2)
+        assert (tmp_path / 'parts' / 'manifest.json').exists()
+    finally:
+        media.close()
+
+
+@pytest.mark.parametrize('output', [
+    'out_time_us=2000000\nprogress=continue\n',
+    'out_time_us=N/A\nprogress=end\n',
+    'out_time_us=nan\nprogress=end\n',
+    'progress=end\n',
+    'out_time_us=0\nprogress=end\n',
+])
+def test_decoded_duration_rejects_missing_or_incomplete_progress(monkeypatch, output):
+    from qiniu_get.media import MediaError
+    media = MediaProcessor()
+    monkeypatch.setattr(media, '_run', lambda args: output)
+    try:
+        with pytest.raises(MediaError):
+            media.decoded_audio_duration('unused.mp4')
     finally:
         media.close()

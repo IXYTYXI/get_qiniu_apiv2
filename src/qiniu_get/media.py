@@ -44,6 +44,23 @@ class MediaProcessor:
             raise MediaError('Invalid media duration')
         return duration
 
+    def decoded_audio_duration(self, source):
+        # Count decoded samples on a fresh timeline; container packet durations can
+        # differ from actual decoded audio. Fail closed on reported decode errors.
+        output = self._run([
+            'ffmpeg', '-nostdin', '-v', 'error', '-xerror', '-i', str(source),
+            '-map', '0:a:0', '-vn', '-af', 'asetpts=N/SR/TB',
+            '-c:a', 'pcm_s16le', '-progress', 'pipe:1', '-nostats', '-f', 'null', '-'
+        ])
+        progress = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
+        try:
+            duration = float(progress['out_time_us']) / 1_000_000
+        except (KeyError, ValueError):
+            raise MediaError('Decoded audio duration was not reported') from None
+        if progress.get('progress') != 'end' or not math.isfinite(duration) or duration <= 0:
+            raise MediaError('Decoded audio duration is invalid or incomplete')
+        return duration
+
     def download(self, url, target, *, hls=False):
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -110,13 +127,24 @@ class MediaProcessor:
         audio_duration = sum(durations)
         difference = audio_duration - source_duration
         tolerance = max(2, len(parts) * .15)
+        decoded_duration = None
         if abs(difference) > tolerance:
-            raise AudioCoverageError(
-                'Audio segments do not cover the source duration: '
-                f'source={source_duration:.3f}s, audio={audio_duration:.3f}s, '
-                f'difference={difference:+.3f}s, tolerance={tolerance:.3f}s, '
-                f'parts={len(parts)}; source and segments retained for inspection'
-            )
+            try:
+                decoded_duration = self.decoded_audio_duration(source)
+            except MediaError:
+                raise AudioCoverageError(
+                    'Audio coverage could not be verified by strict decoding; '
+                    'source and segments retained for inspection'
+                ) from None
+            difference = audio_duration - decoded_duration
+            if abs(difference) > tolerance:
+                raise AudioCoverageError(
+                    'Audio segments do not cover the decoded audio duration: '
+                    f'source={source_duration:.3f}s, audio={audio_duration:.3f}s, '
+                    f'decoded={decoded_duration:.3f}s, difference={difference:+.3f}s, '
+                    f'tolerance={tolerance:.3f}s, parts={len(parts)}; '
+                    'source and segments retained for inspection'
+                )
         named_parts, metadata = [], []
         for part, duration in zip(parts, durations):
             digest = self.fingerprint(part)
@@ -127,6 +155,9 @@ class MediaProcessor:
                              'duration': duration, 'sha256': digest})
         parts = named_parts
         temporary = manifest.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'source': signature, 'parts': metadata}), encoding='utf-8')
+        temporary.write_text(json.dumps({'source': signature, 'parts': metadata,
+                                         'coverage': {'container_seconds': source_duration,
+                                                      'decoded_seconds': decoded_duration,
+                                                      'segments_seconds': audio_duration}}), encoding='utf-8')
         temporary.replace(manifest)
         return parts
