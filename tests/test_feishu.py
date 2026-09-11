@@ -226,3 +226,32 @@ def test_app_rich_text_existing_audio_row_is_reused(tmp_path):
         pytest.fail('Existing rich-text row must not be recreated or uploaded: ' + url)
     base = FeishuBase('base', auth='app', app_id='id', app_secret='secret', http=FakeHTTP(handler))
     assert base.sync_audio('tbl', 1, 'title', '2026-09-09', [audio]) == 0
+
+
+def test_upload_request_pacer_spaces_calls():
+    from qiniu_get.feishu import UploadPacer
+    now = [0.0]
+    starts = []
+    def sleep(delay): now[0] += delay
+    pacer = UploadPacer(clock=lambda: now[0], sleep=sleep)
+    for _ in range(5):
+        pacer.wait()
+        starts.append(now[0])
+    assert starts == [0, .25, .5, .75, 1.0]
+
+
+def test_media_requests_use_shared_pacer_before_each_attempt():
+    calls = []
+    class Pacer:
+        def wait(self): calls.append('paced')
+    def handler(method, url, kwargs):
+        if url.endswith('/tenant_access_token/internal'):
+            return 200, {'code': 0, 'tenant_access_token': 'token', 'expire': 7200}
+        calls.append('request')
+        return 200, {'code': 0, 'data': {}}
+    shared = Pacer()
+    for _ in range(2):
+        base = FeishuBase('base', auth='app', app_id='id', app_secret='secret', http=FakeHTTP(handler))
+        base.upload_pacer = shared
+        base._open('POST', '/open-apis/drive/v1/medias/upload_prepare', write=True, json={})
+    assert calls == ['paced', 'request', 'paced', 'request']

@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)][string]$StartDate,
     [string]$EndDate = $StartDate,
     [ValidateSet('audio', 'danmaku', 'both')][string]$Only = 'audio',
+    [ValidateRange(1, 3)][int]$Workers = 3,
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -20,7 +21,7 @@ try {
     for ($day = $start; $day -le $end; $day = $day.AddDays(1)) {
         $dateText = $day.ToString('yyyy-MM-dd')
         Write-Host "Processing $dateText ($Only)"
-        $arguments = @('-m', 'qiniu_get', 'run', '--date', $dateText, '--only', $Only)
+        $arguments = @('-m', 'qiniu_get', 'run', '--date', $dateText, '--workers', $Workers, '--only', $Only)
         if ($DryRun) { $arguments += '--dry-run' }
         & $python @arguments
         if ($LASTEXITCODE -ne 0) { $failed += $dateText }

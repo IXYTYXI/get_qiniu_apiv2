@@ -1,6 +1,7 @@
 param(
     [string]$TargetDate = '',
     [ValidateSet('audio', 'danmaku', 'both')][string]$Only = 'audio',
+    [ValidateRange(1, 3)][int]$Workers = 3,
     [switch]$DryRun,
     [switch]$PrintPlan,
     [string]$PythonExe = ''
@@ -17,7 +18,7 @@ if (-not $PythonExe) { $PythonExe = Join-Path $PSScriptRoot '.venv\Scripts\pytho
 $logs = Join-Path $PSScriptRoot 'logs'
 $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff') + "-$PID"
 $prefix = Join-Path $logs "daily-$TargetDate-$stamp"
-$arguments = @('-m', 'qiniu_get', 'run', '--date', $TargetDate, '--only', $Only)
+$arguments = @('-m', 'qiniu_get', 'run', '--date', $TargetDate, '--workers', $Workers, '--only', $Only)
 if ($DryRun) { $arguments += '--dry-run' }
 $plan = [ordered]@{
     target_date = $TargetDate

@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from threading import Lock
 import os
 import httpx
 
@@ -62,6 +63,21 @@ def _attachment_tokens(attachments):
     return tokens
 
 
+class UploadPacer:
+    """Space this process's application media requests by at least 250 ms."""
+    def __init__(self, *, clock=time.monotonic, sleep=time.sleep):
+        self.clock, self.sleep = clock, sleep
+        self.lock = Lock()
+        self.next_request = 0.0
+
+    def wait(self):
+        with self.lock:
+            delay = self.next_request - self.clock()
+            if delay > 0:
+                self.sleep(delay)
+            self.next_request = self.clock() + .25
+
+
 class FeishuBase:
     def __init__(self, base_token, *, cli='lark-cli', profile=None, runner=subprocess.run,
                  auth='cli', app_id=None, app_secret=None, open_base='https://open.feishu.cn',
@@ -71,6 +87,7 @@ class FeishuBase:
         self.app_id, self.app_secret = app_id, app_secret
         self.open_base = (open_base or 'https://open.feishu.cn').rstrip('/')
         self.sleep = sleep
+        self.upload_pacer = UploadPacer()
         self.token, self.expires = None, 0
         self.http = http
         self._owns_http = False
@@ -157,6 +174,8 @@ class FeishuBase:
                 self._authenticate()
             headers = dict(extra_headers)
             headers['Authorization'] = f'Bearer {self.token}'
+            if path.startswith('/open-apis/drive/v1/medias/upload_'):
+                self.upload_pacer.wait()
             try:
                 response = self.http.request(method, self.open_base + path, headers=headers, **kwargs)
             except httpx.TransportError:

@@ -56,7 +56,7 @@ def test_partial_failure_continues_and_exits_nonzero(tmp_path, monkeypatch, caps
         def live_info(self, live_id): return {'title': '小学', 'start_time': '2026-09-09T08:00:00'}
         def close(self): pass
     seen = []
-    def run(*args):
+    def run(*args, **kwargs):
         live_id = args[4]['id']
         seen.append(live_id)
         if live_id == 1:
@@ -64,7 +64,7 @@ def test_partial_failure_continues_and_exits_nonzero(tmp_path, monkeypatch, caps
         return {'live_id': live_id}
     monkeypatch.setattr(cli, 'QiniuClient', Api)
     monkeypatch.setattr(cli, 'run_session', run)
-    assert cli.main(['--config', str(config), 'run', '--live-id', '1', '--live-id', '2', '--only', 'danmaku']) == 1
+    assert cli.main(['--config', str(config), 'run', '--live-id', '1', '--live-id', '2', '--only', 'danmaku', '--workers', '1']) == 1
     assert seen == [1, 2]
 
 
@@ -102,3 +102,101 @@ def test_busy_collector_explains_lock_without_running_session(tmp_path, monkeypa
     with run_lock(tmp_path / 'data'):
         assert cli.main(['--config', str(config), 'run', '--live-id', '1', '--only', 'danmaku']) == 1
     assert 'Collector already running with this output directory' in capsys.readouterr().err
+
+
+def test_three_workers_overlap_with_isolated_clients_and_failure_cleanup(tmp_path, monkeypatch, capsys):
+    import threading
+    from qiniu_get import cli
+    config = tmp_path / 'config.toml'
+    config.write_text('[feishu]\nbase_token="test"\naudio_table="tbl"\n')
+    for key in ('QINIU_APP_ID', 'QINIU_APP_SECRET', 'QINIU_ENTERPRISE_ID'):
+        monkeypatch.setenv(key, '1')
+    created, closed, clients = [], [], []
+    lock = threading.Lock()
+    barrier = threading.Barrier(3, timeout=5)
+    class Client:
+        def __init__(self, *args):
+            with lock: created.append(self)
+        def live_info(self, live_id): return {'title': 'test', 'start_time': '2026-09-09T08:00:00'}
+        def close(self):
+            with lock: closed.append(self)
+    class Base(Client):
+        @classmethod
+        def from_config(cls, config): return cls()
+    monkeypatch.setattr(cli, 'QiniuClient', Client)
+    monkeypatch.setattr(cli, 'MediaProcessor', Client)
+    monkeypatch.setattr(cli, 'FeishuBase', Base)
+    def run(api, base, media, config, session, only, **kwargs):
+        with lock: clients.append((api, base, media))
+        if session['id'] <= 3:
+            barrier.wait()
+        if session['id'] == 2:
+            raise ValueError('test failure')
+        return {'live_id': session['id']}
+    monkeypatch.setattr(cli, 'run_session', run)
+    args = ['--config', str(config), 'run', '--only', 'audio', '--workers', '3']
+    for live_id in (1, 2, 3, 4): args += ['--live-id', str(live_id)]
+    assert cli.main(args) == 1
+    import json
+    result = json.loads(capsys.readouterr().out)
+    assert [r['live_id'] for r in result['completed']] == [1, 3, 4]
+    assert result['failed'] == [{'live_id': 2, 'error': 'test failure'}]
+    assert len(clients) == 4
+    for index in range(3): assert len({id(c[index]) for c in clients}) == 4
+    assert {id(c) for c in created} == {id(c) for c in closed}
+    assert len(closed) == len(created)
+
+
+def test_workers_default_and_bounds():
+    assert parser().parse_args(['run', '--live-id', '1']).workers == 3
+    for workers in ('0', '-1', '4'):
+        with pytest.raises(SystemExit):
+            parser().parse_args(['run', '--live-id', '1', '--workers', workers])
+
+
+def test_three_downloads_and_transcodes_overlap_but_uploads_are_serial(tmp_path, monkeypatch, capsys):
+    import threading
+    import time
+    from qiniu_get import cli
+    config = tmp_path / 'config.toml'
+    config.write_text('[feishu]\nbase_token="test"\naudio_table="tbl"\n')
+    for key in ('QINIU_APP_ID', 'QINIU_APP_SECRET', 'QINIU_ENTERPRISE_ID'):
+        monkeypatch.setenv(key, '1')
+    downloads = threading.Barrier(3, timeout=5)
+    transcodes = threading.Barrier(3, timeout=5)
+    active = [0]
+    maximum = [0]
+    lock = threading.Lock()
+    class Api:
+        def __init__(self, *args): pass
+        def live_info(self, live_id): return {'title': 'test', 'start_time': '2026-09-09T08:00:00'}
+        def recording(self, live_id): return {'file_url': 'https://example.com/video.mp4'}
+        def close(self): pass
+    class Base:
+        @classmethod
+        def from_config(cls, config): return cls()
+        def validate(self, *args): pass
+        def close(self): pass
+        def sync_audio(self, *args):
+            with lock:
+                active[0] += 1
+                maximum[0] = max(maximum[0], active[0])
+            time.sleep(.03)
+            with lock: active[0] -= 1
+            return 1
+    class Media:
+        def download(self, url, target, **kwargs):
+            downloads.wait()
+            return target
+        def segment(self, source, directory, live_id, seconds):
+            transcodes.wait()
+            return [directory / 'part.mp3']
+        def close(self): pass
+    monkeypatch.setattr(cli, 'QiniuClient', Api)
+    monkeypatch.setattr(cli, 'FeishuBase', Base)
+    monkeypatch.setattr(cli, 'MediaProcessor', Media)
+    assert cli.main(['--config', str(config), 'run', '--only', 'audio',
+                     '--live-id', '1', '--live-id', '2', '--live-id', '3']) == 0
+    assert maximum[0] == 1
+    import json
+    assert len(json.loads(capsys.readouterr().out)['completed']) == 3

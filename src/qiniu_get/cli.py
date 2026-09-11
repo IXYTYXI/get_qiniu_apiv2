@@ -1,4 +1,7 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from threading import Lock, BoundedSemaphore
 from datetime import date
 import json
 import os
@@ -7,7 +10,7 @@ import sys
 from dotenv import load_dotenv
 from .api import QiniuClient
 from .config import load_config
-from .feishu import FeishuBase, DANMAKU_FIELDS
+from .feishu import FeishuBase, DANMAKU_FIELDS, UploadPacer
 from .media import MediaProcessor
 from .pipeline import CollectorBusyError, run_session, run_lock, select_sessions
 
@@ -29,6 +32,7 @@ def parser():
     selector.add_argument('--date', type=date.fromisoformat, help='按 Asia/Shanghai 开播自然日筛选')
     selector.add_argument('--live-id', type=positive_int, action='append', help='直播ID，可重复传入')
     run.add_argument('--only', choices=['both', 'audio', 'danmaku'], default='both')
+    run.add_argument('--workers', type=int, choices=(1, 2, 3), default=3, help='最多同时处理的直播场次，默认3')
     run.add_argument('--dry-run', action='store_true', help='只查询直播，不下载、不写飞书')
     return root
 
@@ -68,22 +72,44 @@ def main(argv=None):
             return 0
         if not config.base_token or (args.only != 'danmaku' and not config.audio_table):
             raise ValueError('Configure the Feishu destination before running')
-        media = MediaProcessor() if args.only != 'danmaku' else None
         completed, failed = [], []
+        stage_locks = {'segment': BoundedSemaphore(3), 'upload': Lock()}
+        upload_pacer = UploadPacer()
+
+        def process(session):
+            live_id = session['id']
+            print(f'Processing live {live_id}', file=sys.stderr, flush=True)
+            try:
+                # Each scene owns its clients and credentials/token state.
+                with ExitStack() as stack:
+                    worker_api = QiniuClient(config.api_base_url, credentials[0], credentials[1], int(credentials[2]))
+                    stack.callback(worker_api.close)
+                    worker_base = FeishuBase.from_config(config)
+                    stack.callback(worker_base.close)
+                    worker_base.upload_pacer = upload_pacer
+                    worker_media = MediaProcessor() if args.only != 'danmaku' else None
+                    if worker_media:
+                        stack.callback(worker_media.close)
+                    result = run_session(worker_api, worker_base, worker_media, config, session,
+                                         args.only, stage_locks=stage_locks)
+                print(f'Completed live {live_id}', file=sys.stderr, flush=True)
+                return result, None
+            except Exception as error:
+                from .api import ApiError
+                from .feishu import FeishuError
+                from .media import MediaError
+                message = str(error) if isinstance(error, (ApiError, FeishuError, MediaError, ValueError)) else type(error).__name__
+                print(f'Live {live_id} failed: {message}', file=sys.stderr, flush=True)
+                return None, {'live_id': live_id, 'error': message}
+
         with run_lock(config.output_dir):
-            for session in sessions:
-                live_id = session['id']
-                print(f'Processing live {live_id}', file=sys.stderr, flush=True)
-                try:
-                    completed.append(run_session(api, base, media, config, session, args.only))
-                except Exception as error:
-                    # Only known sanitized domain errors are shown; raw network/subprocess tracebacks are not logged.
-                    from .api import ApiError
-                    from .feishu import FeishuError
-                    from .media import MediaError
-                    message = str(error) if isinstance(error, (ApiError, FeishuError, MediaError, ValueError)) else type(error).__name__
-                    failed.append({'live_id': live_id, 'error': message})
-                    print(f'Live {live_id} failed: {message}', file=sys.stderr, flush=True)
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                # Stable summary order, even when scenes finish out of order.
+                for result, error in pool.map(process, sessions):
+                    if error is None:
+                        completed.append(result)
+                    else:
+                        failed.append(error)
         print(json.dumps({'selected': len(sessions), 'completed': completed, 'failed': failed}, ensure_ascii=False, indent=2))
         return 1 if failed else 0
     except Exception as error:

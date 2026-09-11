@@ -46,3 +46,11 @@ def test_missing_config_produces_logs_and_nonzero_exit(tmp_path):
     record = json.loads(records[0].read_text(encoding='utf-8-sig'))
     assert record['exit_code'] == 1
     assert 'config.toml' in Path(record['stderr_log']).read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('workers', ['1', '3'])
+def test_plan_forwards_worker_limit(workers):
+    result = execute(SCRIPT, '-Workers', workers, '-PrintPlan')
+    assert result.returncode == 0, result.stderr
+    args = json.loads(result.stdout)['arguments']
+    assert str(args[args.index('--workers') + 1]) == workers

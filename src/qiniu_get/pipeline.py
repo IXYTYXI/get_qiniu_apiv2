@@ -1,4 +1,5 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+import sys
 from datetime import datetime
 import csv
 from filelock import FileLock, Timeout
@@ -68,7 +69,8 @@ def run_lock(directory):
 
 
 
-def run_session(api, base, media, config, session, only='both'):
+def run_session(api, base, media, config, session, only='both', *, stage_locks=None):
+    stage_locks = stage_locks or {}
     live_id = int(session['id'])
     title = session.get('title') or str(live_id)
     day = local_time(session['start_time']).date().isoformat()
@@ -94,14 +96,18 @@ def run_session(api, base, media, config, session, only='both'):
             writer = csv.writer(handle)
             writer.writerow(DANMAKU_FIELDS)
             writer.writerows(rows)
-        result['danmaku_added'] = base.sync_danmaku(table, live_id, rows)
+        with stage_locks.get('upload', nullcontext()):
+            result['danmaku_added'] = base.sync_danmaku(table, live_id, rows)
     if only in ('both', 'audio'):
         recording = api.recording(live_id)
         url = recording.get('file_url') or recording['play_url']
         hls = not recording.get('file_url') or urlparse(url).path.lower().endswith('.m3u8')
+        print(f'Live {live_id}: downloading or reusing video', file=sys.stderr, flush=True)
         source = media.download(url, directory / 'video.mp4', hls=hls)
         try:
-            parts = media.segment(source, directory / f'audio_{config.segment_seconds}', live_id, config.segment_seconds)
+            with stage_locks.get('segment', nullcontext()):
+                print(f'Live {live_id}: checking or splitting audio', file=sys.stderr, flush=True)
+                parts = media.segment(source, directory / f'audio_{config.segment_seconds}', live_id, config.segment_seconds)
         except AudioCoverageError:
             # Keep evidence: timestamp gaps or shorter audio can also cause mismatch.
             raise
@@ -110,5 +116,7 @@ def run_session(api, base, media, config, session, only='both'):
             # Invalidate only our own cache so the next run can fetch fresh bytes.
             source.unlink(missing_ok=True)
             raise
-        result['audio_added'] = base.sync_audio(config.audio_table, live_id, title, day, parts)
+        with stage_locks.get('upload', nullcontext()):
+            print(f'Live {live_id}: syncing audio attachments', file=sys.stderr, flush=True)
+            result['audio_added'] = base.sync_audio(config.audio_table, live_id, title, day, parts)
     return result
