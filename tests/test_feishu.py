@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 from collections import Counter
+import httpx
 import pytest
 from qiniu_get.feishu import FeishuBase, FeishuError, decode_records, missing_rows
 
@@ -81,3 +82,99 @@ def test_cli_file_arguments_are_relative_to_subprocess_cwd(tmp_path):
     base._call('+record-upsert', 'tbl1', payload={'名称': 'test'})
     audio = tmp_path / 'audio.mp3'; audio.write_bytes(b'audio')
     base._call('+record-upload-attachment', 'tbl1', '--file', str(audio))
+
+
+def _response(method, url, status, body):
+    return httpx.Response(status, json=body, request=httpx.Request(method, url))
+
+
+class FakeHTTP:
+    def __init__(self, handler):
+        self.handler = handler
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        status, body = self.handler(method, url, kwargs)
+        return _response(method, url, status, body)
+
+    def close(self):
+        pass
+
+
+def test_open_api_maps_field_types_and_uses_tenant_token():
+    def handler(method, url, kwargs):
+        if url.endswith('/tenant_access_token/internal'):
+            assert kwargs['json']['app_id'] == 'cli_test'
+            return 200, {'code': 0, 'tenant_access_token': 't-app', 'expire': 7200}
+        assert kwargs['headers']['Authorization'] == 'Bearer t-app'
+        assert url.endswith('/fields')
+        return 200, {'code': 0, 'data': {'items': [
+            {'field_name': '名称', 'type': 1},
+            {'field_name': '日期', 'type': 1},
+            {'field_name': '音频', 'type': 17},
+        ], 'has_more': False}}
+    http = FakeHTTP(handler)
+    base = FeishuBase('basetoken', auth='app', app_id='cli_test', app_secret='secret', http=http)
+    base.validate('tbl1', {'名称': 'text', '日期': 'text', '音频': 'attachment'})
+
+
+def test_open_api_batch_create_is_200_rows_and_write_is_not_retried():
+    writes = []
+    def handler(method, url, kwargs):
+        if url.endswith('/tenant_access_token/internal'):
+            return 200, {'code': 0, 'tenant_access_token': 't-app', 'expire': 7200}
+        writes.append(url)
+        assert len(kwargs['json']['records']) <= 200
+        return 500, {'code': 1, 'msg': 'secret-bearing response'}
+    http = FakeHTTP(handler)
+    base = FeishuBase('basetoken', auth='app', app_id='id', app_secret='secret-value', http=http)
+    with pytest.raises(FeishuError) as error:
+        base.batch_create('tbl1', ['内容'], [[str(i)] for i in range(201)])
+    assert len(writes) == 1
+    assert 'secret-value' not in str(error.value)
+    assert 'secret-bearing' not in str(error.value)
+
+
+def test_open_api_attachment_resume_skips_and_appends_file_token(tmp_path):
+    a, b = tmp_path / '1_s3600_part0000.mp3', tmp_path / '1_s3600_part0001.mp3'
+    a.write_bytes(b'1'); b.write_bytes(b'2')
+    puts, uploads = [], []
+    def handler(method, url, kwargs):
+        if url.endswith('/tenant_access_token/internal'):
+            return 200, {'code': 0, 'tenant_access_token': 't-app', 'expire': 7200}
+        if url.endswith('/records/search'):
+            return 200, {'code': 0, 'data': {'items': [{
+                'record_id': 'rec1',
+                'fields': {'名称': '1 title', '日期': '2026-09-09',
+                           '音频': [{'name': a.name, 'file_token': 'tok-a'}]},
+            }], 'has_more': False}}
+        if url.endswith('/medias/upload_all'):
+            uploads.append(kwargs['data']['file_name'])
+            return 200, {'code': 0, 'data': {'file_token': 'tok-b'}}
+        if '/records/rec1' in url and method == 'PUT':
+            puts.append(kwargs['json']['fields']['音频'])
+            return 200, {'code': 0, 'data': {}}
+        raise AssertionError(url)
+    http = FakeHTTP(handler)
+    base = FeishuBase('basetoken', auth='app', app_id='id', app_secret='secret', http=http)
+    assert base.sync_audio('tbl1', 1, 'title', '2026-09-09', [a, b]) == 1
+    assert uploads == [b.name]
+    assert puts == [[{'file_token': 'tok-a'}, {'file_token': 'tok-b'}]]
+
+
+def test_open_api_401_refreshes_tenant_token_once():
+    tokens, fields = [], []
+    def handler(method, url, kwargs):
+        if url.endswith('/tenant_access_token/internal'):
+            tokens.append(1)
+            return 200, {'code': 0, 'tenant_access_token': f't{len(tokens)}', 'expire': 7200}
+        fields.append(kwargs['headers']['Authorization'])
+        if len(fields) == 1:
+            return 401, {'code': 99991663, 'msg': 'token invalid'}
+        return 200, {'code': 0, 'data': {'items': [{'field_name': '音频', 'type': 17}], 'has_more': False}}
+    http = FakeHTTP(handler)
+    base = FeishuBase('basetoken', auth='app', app_id='id', app_secret='secret', http=http)
+    base.validate('tbl1', {'音频': 'attachment'})
+    assert len(tokens) == 2
+    assert fields == ['Bearer t1', 'Bearer t2']

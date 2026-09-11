@@ -13,6 +13,8 @@ class Config:
     danmaku_tables: dict = field(default_factory=dict)
     lark_cli: str = 'lark-cli'
     lark_profile: str | None = None
+    auth: str = 'cli'
+    open_base: str = 'https://open.feishu.cn'
 
 
 def load_config(path):
@@ -24,8 +26,12 @@ def load_config(path):
     if type(seconds) is not int or not 1 <= seconds <= 86400:
         raise ValueError('media.segment_seconds must be an integer between 1 and 86400')
     output = Path(media.get('output_dir', 'data'))
+    auth = base.get('auth', 'cli')
+    if auth not in ('cli', 'app'):
+        raise ValueError('feishu.auth must be "cli" or "app"')
     return Config(api_base_url=data.get('qiniu', {}).get('base_url', Config.api_base_url),
                   output_dir=output if output.is_absolute() else path.parent / output,
                   segment_seconds=seconds, base_token=base.get('base_token', ''),
                   audio_table=base.get('audio_table', ''), danmaku_tables=base.get('danmaku_tables', {}),
-                  lark_cli=base.get('cli', 'lark-cli'), lark_profile=base.get('profile') or None)
+                  lark_cli=base.get('cli', 'lark-cli'), lark_profile=base.get('profile') or None,
+                  auth=auth, open_base=base.get('open_base', 'https://open.feishu.cn'))

@@ -35,18 +35,19 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    api = media = None
+    api = media = base = None
     try:
         config = load_config(args.config)
         load_dotenv(Path(args.config).resolve().parent / '.env')
-        base = FeishuBase(config.base_token, cli=config.lark_cli, profile=config.lark_profile)
+        base = FeishuBase.from_config(config)
         if args.command == 'check-base':
             if not config.base_token or not config.audio_table or not config.danmaku_tables:
                 raise ValueError('Configure feishu.base_token, audio_table and danmaku_tables first')
             base.validate(config.audio_table, {'名称': 'text', '日期': 'text', '音频': 'attachment'})
             for table in set(config.danmaku_tables.values()):
                 base.validate(table, dict.fromkeys(DANMAKU_FIELDS, 'text'))
-            print('Base schema checked successfully (read-only, user identity).')
+            identity = 'tenant_access_token' if config.auth == 'app' else 'user identity'
+            print(f'Base schema checked successfully (read-only, {identity}).')
             return 0
         credentials = [os.getenv(key) for key in ('QINIU_APP_ID', 'QINIU_APP_SECRET', 'QINIU_ENTERPRISE_ID')]
         if not all(credentials):
@@ -97,6 +98,8 @@ def main(argv=None):
             api.close()
         if media:
             media.close()
+        if base:
+            base.close()
 
 
 if __name__ == '__main__':

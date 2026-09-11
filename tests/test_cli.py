@@ -10,6 +10,13 @@ def test_run_requires_explicit_date_or_live_id():
     assert args.live_id == [123] and args.dry_run
 
 
+def test_config_rejects_invalid_feishu_auth(tmp_path):
+    path = tmp_path / 'config.toml'
+    path.write_text('[feishu]\nauth = "bot"\n')
+    with pytest.raises(ValueError, match='feishu.auth'):
+        load_config(path)
+
+
 def test_config_rejects_invalid_chunk_size(tmp_path):
     path = tmp_path / 'config.toml'
     path.write_text('[media]\nsegment_seconds = 0\n')
