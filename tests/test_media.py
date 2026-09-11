@@ -40,3 +40,21 @@ def test_parts_have_content_fingerprint(tmp_path):
     parts = MediaProcessor().segment(source, tmp_path / 'parts', '9', 3600)
     import hashlib
     assert hashlib.sha256(parts[0].read_bytes()).hexdigest()[:12] in parts[0].name
+
+
+def test_coverage_failure_reports_durations_and_keeps_unpublished_parts(tmp_path):
+    from qiniu_get.media import AudioCoverageError
+    source = tmp_path / 'source.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                    'color=c=black:s=64x64:r=10:duration=8', '-f', 'lavfi', '-i',
+                    'sine=frequency=440:duration=2', '-c:v', 'mpeg4', '-c:a', 'aac',
+                    str(source)], check=True)
+    media = MediaProcessor()
+    try:
+        with pytest.raises(AudioCoverageError, match=r'source=8\.000s.*audio=.*difference=.*tolerance='):
+            media.segment(source, tmp_path / 'parts', 10, 3600)
+        assert source.exists()
+        assert not (tmp_path / 'parts' / 'manifest.json').exists()
+        assert list((tmp_path / 'parts').glob('*.mp3'))
+    finally:
+        media.close()

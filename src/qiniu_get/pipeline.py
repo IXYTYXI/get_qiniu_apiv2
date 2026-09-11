@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from .feishu import DANMAKU_FIELDS
-from .media import MediaError
+from .media import AudioCoverageError, MediaError
 
 TZ = ZoneInfo('Asia/Shanghai')
 
@@ -98,6 +98,9 @@ def run_session(api, base, media, config, session, only='both'):
         source = media.download(url, directory / 'video.mp4', hls=hls)
         try:
             parts = media.segment(source, directory / f'audio_{config.segment_seconds}', live_id, config.segment_seconds)
+        except AudioCoverageError:
+            # Keep evidence: timestamp gaps or shorter audio can also cause mismatch.
+            raise
         except MediaError:
             # A readable MP4 header does not prove the entire download is decodable.
             # Invalidate only our own cache so the next run can fetch fresh bytes.

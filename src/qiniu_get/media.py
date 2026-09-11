@@ -12,6 +12,10 @@ class MediaError(RuntimeError):
     pass
 
 
+class AudioCoverageError(MediaError):
+    """Duration mismatch alone does not prove corrupt source bytes."""
+
+
 class MediaProcessor:
     def __init__(self, *, client=None):
         self.http = client or httpx.Client(timeout=120, follow_redirects=True)
@@ -102,8 +106,17 @@ class MediaProcessor:
         if not parts:
             raise MediaError('No audio segments were produced')
         durations = [self.duration(p) for p in parts]
-        if abs(sum(durations) - self.duration(source)) > max(2, len(parts) * .15):
-            raise MediaError('Audio segments do not cover the source duration')
+        source_duration = self.duration(source)
+        audio_duration = sum(durations)
+        difference = audio_duration - source_duration
+        tolerance = max(2, len(parts) * .15)
+        if abs(difference) > tolerance:
+            raise AudioCoverageError(
+                'Audio segments do not cover the source duration: '
+                f'source={source_duration:.3f}s, audio={audio_duration:.3f}s, '
+                f'difference={difference:+.3f}s, tolerance={tolerance:.3f}s, '
+                f'parts={len(parts)}; source and segments retained for inspection'
+            )
         named_parts, metadata = [], []
         for part, duration in zip(parts, durations):
             digest = self.fingerprint(part)

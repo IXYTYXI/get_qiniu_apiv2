@@ -61,3 +61,23 @@ def test_bad_cached_source_is_invalidated_for_next_run(tmp_path):
         run_session(api, Base(), Media(), config,
                     {'id': 1, 'title': 'title', 'start_time': '2026-09-09T08:00:00'}, 'audio')
     assert not (tmp_path / '1' / 'video.mp4').exists()
+
+
+def test_coverage_failure_keeps_source_and_does_not_upload(tmp_path):
+    from qiniu_get.media import AudioCoverageError
+    class Media:
+        def download(self, url, target, **kwargs):
+            target.write_bytes(b'evidence')
+            return target
+        def segment(self, *args):
+            raise AudioCoverageError('coverage mismatch')
+    class Base:
+        def validate(self, *args): pass
+        def sync_audio(self, *args):
+            pytest.fail('Unverified audio must not be uploaded')
+    api = SimpleNamespace(recording=lambda live_id: {'file_url': 'https://example.com/video.mp4'})
+    config = SimpleNamespace(output_dir=tmp_path, audio_table='tbl1', segment_seconds=3600)
+    with pytest.raises(AudioCoverageError):
+        run_session(api, Base(), Media(), config,
+                    {'id': 1, 'title': 'title', 'start_time': '2026-09-09T08:00:00'}, 'audio')
+    assert (tmp_path / '1' / 'video.mp4').read_bytes() == b'evidence'
