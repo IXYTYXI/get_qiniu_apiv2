@@ -39,6 +39,19 @@ def missing_rows(rows, existing):
     return missing
 
 
+def _normalize_open_fields(fields):
+    result = dict(fields)
+    # Search returns multi-line text as rich-text runs, unlike CLI shortcuts.
+    # Only normalize the collector's text columns; keep attachments intact.
+    for name in {'名称', '日期', *DANMAKU_FIELDS}:
+        value = result.get(name)
+        if isinstance(value, list):
+            if not all(isinstance(run, dict) and isinstance(run.get('text'), str) for run in value):
+                raise FeishuError(f'Unsupported Open API text value for field {name}')
+            result[name] = ''.join(run['text'] for run in value)
+    return result
+
+
 def _attachment_tokens(attachments):
     tokens = []
     for item in attachments or []:
@@ -255,7 +268,7 @@ class FeishuBase:
                 if record_id in seen:
                     raise FeishuError('Base pagination repeated a record')
                 seen.add(record_id)
-                yield {'id': record_id, 'fields': item.get('fields') or {}}
+                yield {'id': record_id, 'fields': _normalize_open_fields(item.get('fields') or {})}
             if not data.get('has_more'):
                 return
             if not page:

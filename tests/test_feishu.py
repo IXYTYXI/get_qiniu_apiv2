@@ -208,3 +208,21 @@ def test_open_record_search_paginates_with_url_query_parameters():
         records = list(base.records('table', ['内容'], [['直播ID', '==', '617691']]))
     assert [r['id'] for r in records] == ['rec1', 'rec2']
     assert queries == [{'page_size': '200'}, {'page_size': '200', 'page_token': 'next/page+2'}]
+
+
+def test_app_rich_text_existing_audio_row_is_reused(tmp_path):
+    audio = tmp_path / '1_part.mp3'
+    audio.write_bytes(b'audio')
+    def handler(method, url, kwargs):
+        if url.endswith('/tenant_access_token/internal'):
+            return 200, {'code': 0, 'tenant_access_token': 'token', 'expire': 7200}
+        if url.endswith('/records/search'):
+            return 200, {'code': 0, 'data': {'items': [{
+                'record_id': 'rec-existing', 'fields': {
+                    '名称': [{'type': 'text', 'text': '1 '}, {'type': 'text', 'text': 'title'}],
+                    '日期': [{'type': 'text', 'text': '2026-09-09'}],
+                    '音频': [{'name': audio.name, 'file_token': 'existing-token'}]
+                }}], 'has_more': False}}
+        pytest.fail('Existing rich-text row must not be recreated or uploaded: ' + url)
+    base = FeishuBase('base', auth='app', app_id='id', app_secret='secret', http=FakeHTTP(handler))
+    assert base.sync_audio('tbl', 1, 'title', '2026-09-09', [audio]) == 0
