@@ -9,7 +9,7 @@ from .api import QiniuClient
 from .config import load_config
 from .feishu import FeishuBase, DANMAKU_FIELDS
 from .media import MediaProcessor
-from .pipeline import run_session, run_lock, select_sessions
+from .pipeline import CollectorBusyError, run_session, run_lock, select_sessions
 
 
 def positive_int(value):
@@ -89,7 +89,7 @@ def main(argv=None):
         from .api import ApiError
         from .feishu import FeishuError
         from .media import MediaError
-        message = str(error) if isinstance(error, (ApiError, FeishuError, MediaError, ValueError, FileNotFoundError)) else type(error).__name__
+        message = str(error) if isinstance(error, (ApiError, FeishuError, MediaError, CollectorBusyError, ValueError, FileNotFoundError)) else type(error).__name__
         print(f'Error: {message}', file=sys.stderr)
         return 1
     finally:

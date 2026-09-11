@@ -75,3 +75,23 @@ def test_date_discovery_does_not_skip_same_day_completions(tmp_path, monkeypatch
         def close(self): pass
     monkeypatch.setattr(cli, 'QiniuClient', Api)
     assert cli.main(['--config', str(config), 'run', '--date', '2026-08-24', '--dry-run']) == 0
+
+
+def test_busy_collector_explains_lock_without_running_session(tmp_path, monkeypatch, capsys):
+    from qiniu_get import cli
+    from qiniu_get.pipeline import run_lock
+    config = tmp_path / 'config.toml'
+    config.write_text('[feishu]\nbase_token="test"\n')
+    for key in ('QINIU_APP_ID', 'QINIU_APP_SECRET', 'QINIU_ENTERPRISE_ID'):
+        monkeypatch.setenv(key, '1')
+    class Api:
+        def __init__(self, *args): pass
+        def live_info(self, live_id): return {'title': 'test', 'start_time': '2026-09-09T08:00:00'}
+        def close(self): pass
+    monkeypatch.setattr(cli, 'QiniuClient', Api)
+    def forbidden(*args):
+        pytest.fail('Busy collector started work')
+    monkeypatch.setattr(cli, 'run_session', forbidden)
+    with run_lock(tmp_path / 'data'):
+        assert cli.main(['--config', str(config), 'run', '--live-id', '1', '--only', 'danmaku']) == 1
+    assert 'Collector already running with this output directory' in capsys.readouterr().err

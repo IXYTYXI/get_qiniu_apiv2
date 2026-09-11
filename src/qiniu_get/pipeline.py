@@ -48,6 +48,10 @@ def message_rows(messages, live_id):
     return rows
 
 
+class CollectorBusyError(RuntimeError):
+    """Another local collector owns the output directory."""
+
+
 @contextmanager
 def run_lock(directory):
     directory = Path(directory)
@@ -56,7 +60,7 @@ def run_lock(directory):
     try:
         lock.acquire(timeout=0)
     except Timeout:
-        raise RuntimeError('Collector already running with this output directory') from None
+        raise CollectorBusyError('Collector already running with this output directory') from None
     try:
         yield
     finally:
