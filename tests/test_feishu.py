@@ -255,3 +255,26 @@ def test_media_requests_use_shared_pacer_before_each_attempt():
         base.upload_pacer = shared
         base._open('POST', '/open-apis/drive/v1/medias/upload_prepare', write=True, json={})
     assert calls == ['paced', 'request', 'paced', 'request']
+
+
+def test_upload_429_retries_with_original_file_bytes(tmp_path):
+    file = tmp_path / 'part.mp3'
+    file.write_bytes(b'whole-audio-payload')
+    bodies, delays = [], []
+    class NoPacing:
+        def wait(self): pass
+    def handler(request):
+        if request.url.path.endswith('/tenant_access_token/internal'):
+            return httpx.Response(200, json={'code': 0, 'tenant_access_token': 'token', 'expire': 7200})
+        bodies.append(request.read())
+        if len(bodies) == 1:
+            return httpx.Response(429, headers={'Retry-After': '2'})
+        return httpx.Response(200, json={'code': 0, 'data': {'file_token': 'uploaded'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        base = FeishuBase('base', auth='app', app_id='id', app_secret='secret',
+                          http=client, sleep=delays.append)
+        base.upload_pacer = NoPacing()
+        assert base._upload_media(file) == 'uploaded'
+    assert delays == [2.0]
+    assert len(bodies) == 2
+    assert all(b'whole-audio-payload' in body for body in bodies)

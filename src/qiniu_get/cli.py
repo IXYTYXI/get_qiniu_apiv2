@@ -1,7 +1,7 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from threading import Lock, BoundedSemaphore
+from threading import BoundedSemaphore
 from datetime import date
 import json
 import os
@@ -73,7 +73,7 @@ def main(argv=None):
         if not config.base_token or (args.only != 'danmaku' and not config.audio_table):
             raise ValueError('Configure the Feishu destination before running')
         completed, failed = [], []
-        stage_locks = {'segment': BoundedSemaphore(3), 'upload': Lock()}
+        stage_locks = {'segment': BoundedSemaphore(3), 'upload': BoundedSemaphore(3)}
         upload_pacer = UploadPacer()
 
         def process(session):

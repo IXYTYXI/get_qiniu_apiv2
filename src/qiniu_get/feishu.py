@@ -169,6 +169,12 @@ class FeishuBase:
         refreshed = False
         attempts = 4 if not write else 1
         attempt = 0
+        rate_retries = 0
+        file_positions = []
+        for value in (kwargs.get('files') or {}).values():
+            handle = value[1] if isinstance(value, tuple) else value
+            if hasattr(handle, 'seek') and hasattr(handle, 'tell'):
+                file_positions.append((handle, handle.tell()))
         while True:
             if not self.token or time.time() >= self.expires - 60:
                 self._authenticate()
@@ -176,6 +182,8 @@ class FeishuBase:
             headers['Authorization'] = f'Bearer {self.token}'
             if path.startswith('/open-apis/drive/v1/medias/upload_'):
                 self.upload_pacer.wait()
+            for handle, position in file_positions:
+                handle.seek(position)
             try:
                 response = self.http.request(method, self.open_base + path, headers=headers, **kwargs)
             except httpx.TransportError:
@@ -188,7 +196,17 @@ class FeishuBase:
                 self.token = None
                 refreshed = True
                 continue
-            if not write and (response.status_code == 429 or response.status_code >= 500) and attempt < attempts - 1:
+            # Explicit rate rejection is safe to retry; ambiguous write failures are not.
+            if response.status_code == 429 and rate_retries < 3:
+                delay = 2 ** rate_retries
+                try:
+                    delay = max(delay, float(response.headers.get('Retry-After', delay)))
+                except ValueError:
+                    pass
+                self.sleep(min(60, delay))
+                rate_retries += 1
+                continue
+            if not write and response.status_code >= 500 and attempt < attempts - 1:
                 self.sleep(min(30, 0.5 * 2 ** attempt))
                 attempt += 1
                 continue

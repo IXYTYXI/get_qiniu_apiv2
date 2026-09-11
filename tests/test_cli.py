@@ -154,7 +154,7 @@ def test_workers_default_and_bounds():
             parser().parse_args(['run', '--live-id', '1', '--workers', workers])
 
 
-def test_three_downloads_and_transcodes_overlap_but_uploads_are_serial(tmp_path, monkeypatch, capsys):
+def test_three_downloads_transcodes_and_uploads_overlap(tmp_path, monkeypatch, capsys):
     import threading
     import time
     from qiniu_get import cli
@@ -164,6 +164,7 @@ def test_three_downloads_and_transcodes_overlap_but_uploads_are_serial(tmp_path,
         monkeypatch.setenv(key, '1')
     downloads = threading.Barrier(3, timeout=5)
     transcodes = threading.Barrier(3, timeout=5)
+    uploads = threading.Barrier(3, timeout=5)
     active = [0]
     maximum = [0]
     lock = threading.Lock()
@@ -181,7 +182,7 @@ def test_three_downloads_and_transcodes_overlap_but_uploads_are_serial(tmp_path,
             with lock:
                 active[0] += 1
                 maximum[0] = max(maximum[0], active[0])
-            time.sleep(.03)
+            uploads.wait()
             with lock: active[0] -= 1
             return 1
     class Media:
@@ -197,6 +198,6 @@ def test_three_downloads_and_transcodes_overlap_but_uploads_are_serial(tmp_path,
     monkeypatch.setattr(cli, 'MediaProcessor', Media)
     assert cli.main(['--config', str(config), 'run', '--only', 'audio',
                      '--live-id', '1', '--live-id', '2', '--live-id', '3']) == 0
-    assert maximum[0] == 1
+    assert maximum[0] == 3
     import json
     assert len(json.loads(capsys.readouterr().out)['completed']) == 3
