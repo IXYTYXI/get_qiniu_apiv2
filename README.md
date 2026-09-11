@@ -16,7 +16,12 @@
 
 ## 安装
 
-需要 Python 3.11+、FFmpeg/ffprobe、已安装并完成**用户身份登录**的 `lark-cli`。飞书采用 CLI 官方 shortcut，附件超过 20 MB 时由 CLI 分片上传，单文件上限 2 GB；1 小时 128 kbps MP3 约 58 MB。
+需要 Python 3.11+、FFmpeg/ffprobe。飞书写入有两种鉴权：
+
+- `feishu.auth = "app"`（推荐在服务器上）：用 `.env` 里的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 换 `tenant_access_token`，走开放平台。应用须已加入目标 Base，并具备读写记录、上传附件权限。附件 ≤ 20 MB 用 `upload_all`，更大则分片上传。
+- `feishu.auth = "cli"`：使用已登录**用户身份**的 `lark-cli`（`--as user`）。服务器需单独安装并授权 CLI。
+
+1 小时 128 kbps MP3 约 58 MB。
 
 ```bash
 # macOS
@@ -31,7 +36,7 @@ cp config.example.toml config.toml
 cp .env.example .env
 ```
 
-`lark-cli` 的安装/登录按当前发行版说明操作，先运行 `lark-cli --help` 和 `lark-cli auth --help`。程序显式使用 `--as user`；不自动切换应用身份。可在配置中指定已登录的 `profile`。服务器需要单独安装并授权 CLI，不能假定桌面登录会自动同步。
+`lark-cli` 仅在 `auth = "cli"` 时需要。安装/登录按当前发行版说明操作，先运行 `lark-cli --help` 和 `lark-cli auth --help`。程序显式使用 `--as user`；不自动切换应用身份。可在配置中指定已登录的 `profile`。服务器需要单独安装并授权 CLI，不能假定桌面登录会自动同步。
 
 将上游凭证填入 `.env`，不要提交到 Git：
 
@@ -39,9 +44,11 @@ cp .env.example .env
 QINIU_APP_ID=你的上游应用ID
 QINIU_APP_SECRET=你的上游应用密钥
 QINIU_ENTERPRISE_ID=你的企业ID
+FEISHU_APP_ID=你的飞书应用ID
+FEISHU_APP_SECRET=你的飞书应用密钥
 ```
 
-这些是有因直播接口凭证，并非通用七牛对象存储 AK/SK，也不是飞书 app ID。`.env` 从 `config.toml` 所在目录加载；现有环境变量优先。
+`QINIU_*` 是有因直播接口凭证，并非通用七牛对象存储 AK/SK。`FEISHU_*` 只在 `auth = "app"` 时使用。`.env` 从 `config.toml` 所在目录加载；现有环境变量优先。
 
 ## Windows 原生运行（无需 WSL）
 
@@ -101,7 +108,7 @@ lark-cli base +table-list --base-token YOUR_BASE_TOKEN --as user --format json
 
 弹幕时间为 `YYYY-MM-DD HH:mm:ss`，上游 timestamp 按 Unix 毫秒解释。分类按标题包含 `小学`、`初中`、`高中`、`初高` 匹配；没有匹配或匹配多个分类时报告错误，不猜测写入目标。也可将四个分类配置到同一张符合字段要求的弹幕表。
 
-先运行只读检查（不需要上游凭证）：
+先运行只读检查（`auth = "app"` 需要飞书应用凭证，不需要有因直播凭证）：
 
 ```bash
 qiniu-get check-base
